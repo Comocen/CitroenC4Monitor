@@ -148,8 +148,15 @@ class MainWindow(QMainWindow):
     def set_research_phase(self, phase):
         if phase not in (None, "baseline", "experiment"):
             return
+        if self.research_phase is not None and phase is not None:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Сначала завершите текущий этап."
+            )
+            return
         if phase == "baseline":
             self.baseline_rows = []
+            self.experiment_rows = []
             self.research_results = []
             self.research_table.setRowCount(0)
         elif phase == "experiment":
