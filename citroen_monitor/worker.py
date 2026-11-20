@@ -32,6 +32,7 @@ class CanWorker(QThread):
                 parsed=parse_line(line)
                 if parsed:
                     parsed['timestamp']=time.strftime('%Y-%m-%d %H:%M:%S')
+                    parsed['host_rx_monotonic_ns']=time.monotonic_ns()
                     self.frame_received.emit(parsed)
         except Exception as e: self.error.emit(str(e))
         finally:
