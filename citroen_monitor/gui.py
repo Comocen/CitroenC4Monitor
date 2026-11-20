@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
-from .button_research import analyze_button_bits, analyze_button_trials
+from .button_research import analyze_button_bits, analyze_button_trials, analyze_button_transitions
 from .worker import CanWorker
 
 
@@ -28,6 +28,9 @@ class MainWindow(QMainWindow):
         self.experiment_rows = []
         self.experiment_trials = []
         self.active_trial_rows = None
+        self.active_trial_state = None
+        self.transition_trials = []
+        self.transition_results = []
         self.research_results = []
         self.bit_results = []
 
@@ -128,6 +131,15 @@ class MainWindow(QMainWindow):
         start_trial_button = QPushButton("Начать попытку")
         start_trial_button.clicked.connect(self.start_experiment_trial)
         research_controls.addWidget(start_trial_button)
+        before_button = QPushButton("Окно: отпущено до")
+        before_button.clicked.connect(lambda: self.set_trial_state("released_before"))
+        research_controls.addWidget(before_button)
+        pressed_button = QPushButton("Окно: нажато")
+        pressed_button.clicked.connect(lambda: self.set_trial_state("pressed"))
+        research_controls.addWidget(pressed_button)
+        after_button = QPushButton("Окно: отпущено после")
+        after_button.clicked.connect(lambda: self.set_trial_state("released_after"))
+        research_controls.addWidget(after_button)
         finish_trial_button = QPushButton("Завершить попытку")
         finish_trial_button.clicked.connect(self.finish_experiment_trial)
         research_controls.addWidget(finish_trial_button)
@@ -162,6 +174,10 @@ class MainWindow(QMainWindow):
             "Фон", "Кандидат", "Попыток со сменой", "Кандидат"
         ])
         research_layout.addWidget(self.bit_table)
+        research_layout.addWidget(QLabel("Переходный анализ: оба окна отпускания должны совпадать, а окно нажатия — отличаться."))
+        self.transition_table = QTableWidget(0, 7)
+        self.transition_table.setHorizontalHeaderLabels(["CAN ID", "Бит", "Отпущено", "Нажато", "Повторов", "Подходящих попыток", "Кандидат"])
+        research_layout.addWidget(self.transition_table)
         self.tabs.addTab(research_page, "Исследование кнопок")
 
     def set_research_phase(self, phase):
@@ -178,10 +194,16 @@ class MainWindow(QMainWindow):
             self.experiment_rows = []
             self.experiment_trials = []
             self.active_trial_rows = None
+            self.active_trial_state = None
+            self.transition_trials = []
+            self.transition_results = []
             self.research_results = []
             self.bit_results = []
             self.research_table.setRowCount(0)
             self.bit_table.setRowCount(0)
+            self.transition_trials = []
+            self.transition_results = []
+            self.transition_table.setRowCount(0)
         elif phase == "experiment":
             if not self.baseline_rows:
                 QMessageBox.warning(
@@ -230,11 +252,28 @@ class MainWindow(QMainWindow):
                 "Текущая попытка уже записывается."
             )
             return
-        self.active_trial_rows = []
+        self.active_trial_rows = {"released_before": [], "pressed": [], "released_after": []}
+        self.active_trial_state = None
         self.research_status.setText(
-            f"Записывается попытка {len(self.experiment_trials) + 1}. "
-            "Выполните одно и то же действие, затем завершите попытку."
+            f"Попытка {len(self.transition_trials) + 1}: последовательно запишите окна отпускания, нажатия и отпускания."
         )
+
+    def set_trial_state(self, state):
+        if self.active_trial_rows is None:
+            QMessageBox.warning(self, "Исследование кнопок", "Сначала начните попытку.")
+            return
+        if state not in self.active_trial_rows:
+            return
+        if self.active_trial_state is not None and not self.active_trial_rows[self.active_trial_state]:
+            QMessageBox.warning(self, "Исследование кнопок", "В текущем окне ещё нет кадров. Подождите и повторите.")
+            return
+        self.active_trial_state = state
+        messages = {
+            "released_before": "Запись окна ДО нажатия: кнопку не трогайте.",
+            "pressed": "Запись окна НАЖАТИЯ: нажмите и удерживайте кнопку.",
+            "released_after": "Запись окна ПОСЛЕ отпускания: отпустите кнопку."
+        }
+        self.research_status.setText(messages[state])
 
     def finish_experiment_trial(self):
         if self.active_trial_rows is None:
@@ -243,17 +282,22 @@ class MainWindow(QMainWindow):
                 "Сейчас нет активной попытки."
             )
             return
-        if not self.active_trial_rows:
-            QMessageBox.warning(
-                self, "Исследование кнопок",
-                "В этой попытке не получено CAN-кадров; она не сохранена."
-            )
-            self.active_trial_rows = None
+        if self.active_trial_state is not None and not self.active_trial_rows[self.active_trial_state]:
+            QMessageBox.warning(self, "Исследование кнопок", "Текущее окно пустое. Запишите его или повторите попытку.")
             return
-        self.experiment_trials.append(self.active_trial_rows)
-        self.experiment_rows.extend(self.active_trial_rows)
-        count = len(self.experiment_trials)
+        if not any(self.active_trial_rows.values()):
+            QMessageBox.warning(self, "Исследование кнопок", "В попытке нет кадров; она не сохранена.")
+            self.active_trial_rows = None
+            self.active_trial_state = None
+            return
+        trial = self.active_trial_rows
+        self.transition_trials.append(trial)
+        if trial["pressed"]:
+            self.experiment_trials.append(trial["pressed"])
+        self.experiment_rows.extend(trial["released_before"] + trial["pressed"] + trial["released_after"])
+        count = len(self.transition_trials)
         self.active_trial_rows = None
+        self.active_trial_state = None
         self.research_status.setText(
             f"Сохранено попыток: {count}. Запишите следующую попытку "
             "того же действия или завершите режим опытов."
@@ -266,7 +310,7 @@ class MainWindow(QMainWindow):
                 "Сначала нажмите «Завершить этап»."
             )
             return
-        if not self.baseline_rows or len(self.experiment_trials) < 2:
+        if not self.baseline_rows or len(self.transition_trials) < 2:
             QMessageBox.warning(
                 self, "Исследование кнопок",
                 "Нужна фоновая запись и минимум две отдельные попытки."
@@ -278,6 +322,7 @@ class MainWindow(QMainWindow):
         self.bit_results = analyze_button_bits(
             self.baseline_rows, self.experiment_trials, min_repeats=2
         )
+        self.transition_results = analyze_button_transitions(self.transition_trials, min_repeats=2)
         self.research_table.setRowCount(len(self.research_results))
         for row_index, item in enumerate(self.research_results):
             values = [
@@ -309,13 +354,19 @@ class MainWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 self.bit_table.setItem(row_index, column, QTableWidgetItem(value))
+        self.transition_table.setRowCount(len(self.transition_results))
+        for row_index, item in enumerate(self.transition_results):
+            values = [item["can_id"], str(item["bit_index"]), str(item["released_value"]), str(item["pressed_value"]), str(item["changed_trials"]), str(item["eligible_trials"]), "Да" if item["candidate"] else "Нет"]
+            for column, value in enumerate(values):
+                self.transition_table.setItem(row_index, column, QTableWidgetItem(value))
         candidates = sum(1 for item in self.research_results if item["candidate"])
         bit_candidates = sum(1 for item in self.bit_results if item["candidate"])
+        transition_candidates = sum(1 for item in self.transition_results if item["candidate"])
         self.research_status.setText(
             f'Сравнение "{self.research_action.text().strip()}": '
             f'{len(self.experiment_trials)} попыток, {candidates} ID с payload, '
             "повторившимися минимум в двух попытках; "
-            f"{bit_candidates} битовых кандидатов. Это не расшифровка."
+            f"{bit_candidates} обычных битовых и {transition_candidates} переходных кандидатов. Это не расшифровка."
         )
 
     def save_research_report(self):
@@ -377,6 +428,9 @@ class MainWindow(QMainWindow):
         self.experiment_rows = []
         self.experiment_trials = []
         self.active_trial_rows = None
+        self.active_trial_state = None
+        self.transition_trials = []
+        self.transition_results = []
         self.research_results = []
         self.bit_results = []
         self.research_status.setText(
@@ -428,8 +482,8 @@ class MainWindow(QMainWindow):
         self.analyzer.add(frame)
         if self.research_phase == "baseline":
             self.baseline_rows.append(dict(frame))
-        elif self.research_phase == "experiment" and self.active_trial_rows is not None:
-            self.active_trial_rows.append(dict(frame))
+        elif self.research_phase == "experiment" and self.active_trial_rows is not None and self.active_trial_state is not None:
+            self.active_trial_rows[self.active_trial_state].append(dict(frame))
 
         row = self.table.rowCount()
         self.table.insertRow(row)
