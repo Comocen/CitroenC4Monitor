@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
-from .button_research import analyze_button_bits, analyze_button_trials, analyze_button_transitions
+from .button_research import (analyze_button_bits, analyze_button_trials,
+                              analyze_button_transitions, ButtonTrialRecorder)
 from .worker import CanWorker
 
 
@@ -29,6 +30,7 @@ class MainWindow(QMainWindow):
         self.experiment_trials = []
         self.active_trial_rows = None
         self.active_trial_state = None
+        self.trial_recorder = ButtonTrialRecorder(min_frames_per_window=3)
         self.transition_trials = []
         self.transition_results = []
         self.research_results = []
@@ -143,6 +145,9 @@ class MainWindow(QMainWindow):
         finish_trial_button = QPushButton("Завершить попытку")
         finish_trial_button.clicked.connect(self.finish_experiment_trial)
         research_controls.addWidget(finish_trial_button)
+        cancel_trial_button = QPushButton("Отменить попытку")
+        cancel_trial_button.clicked.connect(self.cancel_experiment_trial)
+        research_controls.addWidget(cancel_trial_button)
         finish_button = QPushButton("Завершить этап")
         finish_button.clicked.connect(lambda: self.set_research_phase(None))
         research_controls.addWidget(finish_button)
@@ -195,6 +200,7 @@ class MainWindow(QMainWindow):
             self.experiment_trials = []
             self.active_trial_rows = None
             self.active_trial_state = None
+            self.trial_recorder.cancel()
             self.transition_trials = []
             self.transition_results = []
             self.research_results = []
@@ -221,6 +227,7 @@ class MainWindow(QMainWindow):
             self.experiment_trials = []
             self.active_trial_rows = None
             self.active_trial_state = None
+            self.trial_recorder.cancel()
             self.transition_trials = []
             self.transition_results = []
             self.research_results = []
@@ -256,7 +263,12 @@ class MainWindow(QMainWindow):
                 "Текущая попытка уже записывается."
             )
             return
-        self.active_trial_rows = {"released_before": [], "pressed": [], "released_after": []}
+        try:
+            self.trial_recorder.begin()
+        except RuntimeError as exc:
+            QMessageBox.warning(self, "Исследование кнопок", str(exc))
+            return
+        self.active_trial_rows = self.trial_recorder.active
         self.active_trial_state = None
         self.research_status.setText(
             f"Попытка {len(self.transition_trials) + 1}: последовательно запишите окна отпускания, нажатия и отпускания."
@@ -266,10 +278,10 @@ class MainWindow(QMainWindow):
         if self.active_trial_rows is None:
             QMessageBox.warning(self, "Исследование кнопок", "Сначала начните попытку.")
             return
-        if state not in self.active_trial_rows:
-            return
-        if self.active_trial_state is not None and not self.active_trial_rows[self.active_trial_state]:
-            QMessageBox.warning(self, "Исследование кнопок", "В текущем окне ещё нет кадров. Подождите и повторите.")
+        try:
+            self.trial_recorder.start_window(state)
+        except (RuntimeError, ValueError) as exc:
+            QMessageBox.warning(self, "Исследование кнопок", str(exc))
             return
         self.active_trial_state = state
         messages = {
@@ -286,15 +298,11 @@ class MainWindow(QMainWindow):
                 "Сейчас нет активной попытки."
             )
             return
-        if self.active_trial_state is not None and not self.active_trial_rows[self.active_trial_state]:
-            QMessageBox.warning(self, "Исследование кнопок", "Текущее окно пустое. Запишите его или повторите попытку.")
+        try:
+            trial = self.trial_recorder.finish()
+        except RuntimeError as exc:
+            QMessageBox.warning(self, "Исследование кнопок", str(exc))
             return
-        if not any(self.active_trial_rows.values()):
-            QMessageBox.warning(self, "Исследование кнопок", "В попытке нет кадров; она не сохранена.")
-            self.active_trial_rows = None
-            self.active_trial_state = None
-            return
-        trial = self.active_trial_rows
         self.transition_trials.append(trial)
         if trial["pressed"]:
             self.experiment_trials.append(trial["pressed"])
@@ -306,6 +314,15 @@ class MainWindow(QMainWindow):
             f"Сохранено попыток: {count}. Запишите следующую попытку "
             "того же действия или завершите режим опытов."
         )
+
+
+    def cancel_experiment_trial(self):
+        if not self.trial_recorder.cancel():
+            QMessageBox.information(self, "Исследование кнопок", "Нет активной попытки.")
+            return
+        self.active_trial_rows = None
+        self.active_trial_state = None
+        self.research_status.setText("Текущая попытка отменена; сохранённые попытки не изменены.")
 
     def compare_research(self):
         if self.research_phase is not None:
@@ -438,6 +455,7 @@ class MainWindow(QMainWindow):
         self.experiment_trials = []
         self.active_trial_rows = None
         self.active_trial_state = None
+        self.trial_recorder.cancel()
         self.transition_trials = []
         self.transition_results = []
         self.research_results = []
@@ -492,8 +510,8 @@ class MainWindow(QMainWindow):
         self.analyzer.add(frame)
         if self.research_phase == "baseline":
             self.baseline_rows.append(dict(frame))
-        elif self.research_phase == "experiment" and self.active_trial_rows is not None and self.active_trial_state is not None:
-            self.active_trial_rows[self.active_trial_state].append(dict(frame))
+        elif self.research_phase == "experiment" and self.active_trial_rows is not None:
+            self.trial_recorder.add_frame(frame)
 
         row = self.table.rowCount()
         self.table.insertRow(row)
