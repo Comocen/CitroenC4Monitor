@@ -5,6 +5,7 @@ from citroen_monitor.button_research import (
     analyze_button_trials,
     analyze_button_transitions,
     ButtonTrialRecorder,
+    build_button_research_report_rows,
 )
 
 
@@ -148,6 +149,24 @@ class ButtonResearchTests(unittest.TestCase):
         ]
         trials = [[{"can_id": "100", "data": "01"}] for _ in range(2)]
         self.assertEqual(analyze_button_bits(baseline, trials), [])
+
+
+
+    def test_report_includes_ids_found_only_by_transition_analysis(self):
+        rows = build_button_research_report_rows(
+            "VOLUME_PLUS",
+            [{"can_id": "100", "baseline_frames": 10, "trial_count": 2,
+              "experiment_frames": 6, "baseline_variants": 1,
+              "candidate_payloads": [], "candidate": False}],
+            [],
+            [{"can_id": "200", "bit_index": 3, "released_value": 0,
+              "pressed_value": 1, "candidate": True}],
+            2,
+        )
+        self.assertEqual([row["can_id"] for row in rows], ["100", "200"])
+        transition_only = rows[1]
+        self.assertEqual(transition_only["press_release_bits"], "3:0>1")
+        self.assertEqual(transition_only["baseline_frames"], 0)
 
 
 if __name__ == "__main__":
