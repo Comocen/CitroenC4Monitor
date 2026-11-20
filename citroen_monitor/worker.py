@@ -40,3 +40,50 @@ class CanWorker(QThread):
                 try: self.ser.write(b'C\r'); self.ser.close()
                 except Exception: pass
             self.status.emit('Остановлено')
+
+
+class AdapterCheckWorker(QThread):
+    """Query firmware version without opening the CAN channel."""
+    result = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, port, serial_baud=115200):
+        super().__init__()
+        self.port = port
+        self.serial_baud = serial_baud
+
+    def run(self):
+        ser = None
+        try:
+            ser = serial.Serial(self.port, self.serial_baud, timeout=0.1, write_timeout=1)
+            time.sleep(0.1)
+            ser.reset_input_buffer()
+            ser.write(b"V\r")
+            ser.flush()
+            response = bytearray()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                chunk = ser.read(ser.in_waiting or 1)
+                if chunk:
+                    response.extend(chunk)
+                    if b"\x07" in response or b"\r" in response:
+                        break
+            raw = bytes(response)
+            if not raw:
+                self.error.emit("Нет ответа на запрос версии V. Проверьте COM-порт, serial baud и драйвер.")
+            elif b"\x07" in raw:
+                self.error.emit(f"Адаптер вернул NAK (0x07): {raw!r}")
+            else:
+                version = raw.replace(b"\r", b"").replace(b"\n", b"").decode("ascii", errors="replace").strip()
+                if version:
+                    self.result.emit(f"Ответ адаптера: {version} (raw: {raw!r})")
+                else:
+                    self.result.emit(f"Адаптер ответил ACK (CR), но строка версии пуста. Raw: {raw!r}")
+        except Exception as exc:
+            self.error.emit(str(exc))
+        finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
