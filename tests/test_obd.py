@@ -42,7 +42,7 @@ class ObdPidTests(unittest.TestCase):
 
     def test_supported_pid_bitmap(self):
         # Bits announce PID 01 and PID 0C in the 0100 response bitmap.
-        result = supported_pids("08 00 08 00")
+        result = supported_pids("08 10 00 00")
         self.assertIn(4, result)
         self.assertIn(12, result)
 
