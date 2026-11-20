@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
+from .button_research import analyze_button_experiment
 from .worker import CanWorker
 
 
@@ -22,6 +23,10 @@ class MainWindow(QMainWindow):
         self.rows = []
         self.events = []
         self.analyzer = CanAnalyzer()
+        self.research_phase = None
+        self.baseline_rows = []
+        self.experiment_rows = []
+        self.research_results = []
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -100,6 +105,139 @@ class MainWindow(QMainWindow):
         stats_layout.addWidget(self.stats_table)
         self.tabs.addTab(stats_page, "Статистика CAN")
 
+        research_page = QWidget()
+        research_layout = QVBoxLayout(research_page)
+        research_layout.addWidget(QLabel(
+            "Снимите фоновый трафик без нажатий, затем отдельный захват с одним "
+            "типом нажатия. Сравнение выделяет кандидатов, но не декодирует сигналы."
+        ))
+        research_controls = QHBoxLayout()
+        research_layout.addLayout(research_controls)
+        self.research_action = QLineEdit()
+        self.research_action.setPlaceholderText("Действие, например STEERING_VOLUME_PLUS")
+        research_controls.addWidget(self.research_action)
+        baseline_button = QPushButton("Начать запись фона")
+        baseline_button.clicked.connect(lambda: self.set_research_phase("baseline"))
+        research_controls.addWidget(baseline_button)
+        experiment_button = QPushButton("Начать запись нажатий")
+        experiment_button.clicked.connect(lambda: self.set_research_phase("experiment"))
+        research_controls.addWidget(experiment_button)
+        finish_button = QPushButton("Завершить этап")
+        finish_button.clicked.connect(lambda: self.set_research_phase(None))
+        research_controls.addWidget(finish_button)
+        compare_button = QPushButton("Сравнить")
+        compare_button.clicked.connect(self.compare_research)
+        research_controls.addWidget(compare_button)
+        save_report_button = QPushButton("Сохранить отчёт CSV")
+        save_report_button.clicked.connect(self.save_research_report)
+        research_controls.addWidget(save_report_button)
+        self.research_status = QLabel("Этап не выбран. Сначала запишите фоновый трафик.")
+        self.research_status.setWordWrap(True)
+        research_layout.addWidget(self.research_status)
+        self.research_table = QTableWidget(0, 7)
+        self.research_table.setHorizontalHeaderLabels([
+            "CAN ID", "Кадров фон", "Кадров опыт", "Вариантов фон/опыт",
+            "Новые payload", "Исчезнувшие payload", "Кандидат"
+        ])
+        self.research_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
+        )
+        research_layout.addWidget(self.research_table)
+        self.tabs.addTab(research_page, "Исследование кнопок")
+
+    def set_research_phase(self, phase):
+        if phase not in (None, "baseline", "experiment"):
+            return
+        if phase == "baseline":
+            self.baseline_rows = []
+            self.research_results = []
+            self.research_table.setRowCount(0)
+        elif phase == "experiment":
+            if not self.baseline_rows:
+                QMessageBox.warning(
+                    self, "Исследование кнопок",
+                    "Сначала запишите фоновый трафик без нажатий."
+                )
+                return
+            if not self.research_action.text().strip():
+                QMessageBox.warning(
+                    self, "Исследование кнопок",
+                    "Введите название проверяемого действия."
+                )
+                return
+            self.experiment_rows = []
+            self.research_results = []
+            self.research_table.setRowCount(0)
+        self.research_phase = phase
+        names = {
+            "baseline": "Запись фонового трафика",
+            "experiment": "Запись опыта: " + self.research_action.text().strip(),
+            None: "Этап завершён. Можно сравнить записи."
+        }
+        self.research_status.setText(names[phase])
+
+    def compare_research(self):
+        if self.research_phase is not None:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Сначала нажмите «Завершить этап»."
+            )
+            return
+        if not self.baseline_rows or not self.experiment_rows:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Нужны обе записи: фон и опыт с одним действием."
+            )
+            return
+        self.research_results = analyze_button_experiment(
+            self.baseline_rows, self.experiment_rows
+        )
+        self.research_table.setRowCount(len(self.research_results))
+        for row_index, item in enumerate(self.research_results):
+            values = [
+                item["can_id"],
+                str(item["baseline_frames"]),
+                str(item["experiment_frames"]),
+                f'{item["baseline_variants"]}/{item["experiment_variants"]}',
+                " | ".join(item["new_payloads"]) or "—",
+                " | ".join(item["missing_payloads"]) or "—",
+                "Да" if item["candidate"] else "Нет",
+            ]
+            for column, value in enumerate(values):
+                self.research_table.setItem(
+                    row_index, column, QTableWidgetItem(value)
+                )
+        candidates = sum(1 for item in self.research_results if item["candidate"])
+        self.research_status.setText(
+            f'Сравнение "{self.research_action.text().strip()}": '
+            f'{candidates} ID-кандидатов из {len(self.research_results)}. '
+            "Это статистические отличия, а не расшифровка кнопки."
+        )
+
+    def save_research_report(self):
+        if not self.research_results:
+            QMessageBox.information(
+                self, "Отчёт", "Сначала выполните сравнение."
+            )
+            return
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        path = f"button_research_{stamp}.csv"
+        fields = [
+            "action", "can_id", "baseline_frames", "experiment_frames",
+            "baseline_variants", "experiment_variants", "variant_delta",
+            "new_payloads", "missing_payloads", "candidate"
+        ]
+        with open(path, "w", newline="", encoding="utf-8-sig") as file:
+            writer = csv.DictWriter(file, fieldnames=fields)
+            writer.writeheader()
+            for item in self.research_results:
+                row = {key: item[key] for key in fields if key != "action"}
+                row["action"] = self.research_action.text().strip()
+                row["new_payloads"] = " | ".join(item["new_payloads"])
+                row["missing_payloads"] = " | ".join(item["missing_payloads"])
+                writer.writerow(row)
+        QMessageBox.information(self, "Отчёт", f"Сохранено: {path}")
+
     def refresh_ports(self):
         current = self.port.currentText() if hasattr(self, "port") else ""
         if hasattr(self, "port"):
@@ -158,6 +296,10 @@ class MainWindow(QMainWindow):
     def add_frame(self, frame):
         self.rows.append(frame)
         self.analyzer.add(frame)
+        if self.research_phase == "baseline":
+            self.baseline_rows.append(dict(frame))
+        elif self.research_phase == "experiment":
+            self.experiment_rows.append(dict(frame))
 
         row = self.table.rowCount()
         self.table.insertRow(row)
