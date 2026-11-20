@@ -10,8 +10,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
-from .button_research import (analyze_button_bits, analyze_button_trials,
-                              analyze_button_transitions, ButtonTrialRecorder)
+from .button_research import (
+    analyze_button_bits, analyze_button_trials, analyze_button_transitions,
+    ButtonTrialRecorder, build_button_research_report_rows,
+)
 from .worker import CanWorker
 
 
@@ -395,7 +397,7 @@ class MainWindow(QMainWindow):
         )
 
     def save_research_report(self):
-        if not self.research_results:
+        if not (self.research_results or self.bit_results or self.transition_results):
             QMessageBox.information(
                 self, "Отчёт", "Сначала выполните сравнение."
             )
@@ -407,34 +409,17 @@ class MainWindow(QMainWindow):
             "experiment_frames", "baseline_variants", "candidate_payloads",
             "candidate", "candidate_bits", "press_release_bits"
         ]
+        report_rows = build_button_research_report_rows(
+            self.research_action.text().strip(),
+            self.research_results,
+            self.bit_results,
+            self.transition_results,
+            len(self.transition_trials),
+        )
         with open(path, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.DictWriter(file, fieldnames=fields)
             writer.writeheader()
-            for item in self.research_results:
-                row = {
-                    "action": self.research_action.text().strip(),
-                    "can_id": item["can_id"],
-                    "baseline_frames": item["baseline_frames"],
-                    "trial_count": item["trial_count"],
-                    "experiment_frames": item["experiment_frames"],
-                    "baseline_variants": item["baseline_variants"],
-                    "candidate_payloads": " | ".join(
-                        f'{p["payload"]}:{p["repeat_count"]}/{item["trial_count"]}'
-                        for p in item["candidate_payloads"]
-                    ),
-                    "candidate": item["candidate"],
-                    "candidate_bits": " | ".join(
-                        f'{bit["bit_index"]}:{bit["baseline_value"]}>{bit["candidate_value"]}'
-                        for bit in self.bit_results
-                        if bit["can_id"] == item["can_id"] and bit["candidate"]
-                    ),
-                    "press_release_bits": " | ".join(
-                        f'{bit["bit_index"]}:{bit["released_value"]}>{bit["pressed_value"]}'
-                        for bit in self.transition_results
-                        if bit["can_id"] == item["can_id"] and bit["candidate"]
-                    ),
-                }
-                writer.writerow(row)
+            writer.writerows(report_rows)
         QMessageBox.information(self, "Отчёт", f"Сохранено: {path}")
 
     def refresh_ports(self):
