@@ -162,3 +162,58 @@ def analyze_button_bits(baseline, trials, min_repeats=2):
             item["bit_index"],
         ),
     )
+
+
+def analyze_button_transitions(trials, min_repeats=2):
+    """Find bits that flip only while pressed and restore after release.
+
+    Each trial maps released_before, pressed and released_after to frame rows.
+    A trial counts only when both release windows have the same unambiguous
+    modal bit value and the pressed window has the opposite unambiguous mode.
+    These are statistical candidates, not decoded signals.
+    """
+    if min_repeats < 1:
+        raise ValueError("min_repeats must be at least 1")
+    def modes(rows):
+        counts = defaultdict(lambda: defaultdict(Counter))
+        for row in rows:
+            can_id = str(row.get("can_id", "")).upper()
+            payload = _payload_bytes(row.get("data", ""))
+            if payload is None:
+                continue
+            for byte_index, byte in enumerate(payload):
+                for bit in range(8):
+                    counts[can_id][byte_index * 8 + bit][(byte >> bit) & 1] += 1
+        result = {}
+        for can_id, bits in counts.items():
+            for bit_index, values in bits.items():
+                if values[0] != values[1]:
+                    result[(can_id, bit_index)] = 0 if values[0] > values[1] else 1
+        return result
+    occurrences = Counter()
+    eligible = Counter()
+    for trial in trials:
+        before = modes(trial.get("released_before", []))
+        pressed = modes(trial.get("pressed", []))
+        after = modes(trial.get("released_after", []))
+        for key in set(before) & set(pressed) & set(after):
+            if before[key] != after[key]:
+                continue
+            eligible[key] += 1
+            if pressed[key] != before[key]:
+                occurrences[(key[0], key[1], before[key], pressed[key])] += 1
+    results = []
+    for (can_id, bit_index, released_value, pressed_value), count in occurrences.items():
+        eligible_count = eligible[(can_id, bit_index)]
+        results.append({
+            "can_id": can_id, "bit_index": bit_index,
+            "byte_index": bit_index // 8, "bit_in_byte": bit_index % 8,
+            "released_value": released_value, "pressed_value": pressed_value,
+            "changed_trials": count, "eligible_trials": eligible_count,
+            "repeat_ratio": count / eligible_count if eligible_count else 0.0,
+            "candidate": count >= min_repeats,
+        })
+    return sorted(results, key=lambda item: (
+        not item["candidate"], -item["changed_trials"],
+        item["can_id"], item["bit_index"]
+    ))
