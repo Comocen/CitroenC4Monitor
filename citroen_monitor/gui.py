@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
-from .button_research import analyze_button_experiment
+from .button_research import analyze_button_trials
 from .worker import CanWorker
 
 
@@ -26,6 +26,8 @@ class MainWindow(QMainWindow):
         self.research_phase = None
         self.baseline_rows = []
         self.experiment_rows = []
+        self.experiment_trials = []
+        self.active_trial_rows = None
         self.research_results = []
 
         root = QWidget()
@@ -119,9 +121,15 @@ class MainWindow(QMainWindow):
         baseline_button = QPushButton("Начать запись фона")
         baseline_button.clicked.connect(lambda: self.set_research_phase("baseline"))
         research_controls.addWidget(baseline_button)
-        experiment_button = QPushButton("Начать запись нажатий")
+        experiment_button = QPushButton("Режим опытов")
         experiment_button.clicked.connect(lambda: self.set_research_phase("experiment"))
         research_controls.addWidget(experiment_button)
+        start_trial_button = QPushButton("Начать попытку")
+        start_trial_button.clicked.connect(self.start_experiment_trial)
+        research_controls.addWidget(start_trial_button)
+        finish_trial_button = QPushButton("Завершить попытку")
+        finish_trial_button.clicked.connect(self.finish_experiment_trial)
+        research_controls.addWidget(finish_trial_button)
         finish_button = QPushButton("Завершить этап")
         finish_button.clicked.connect(lambda: self.set_research_phase(None))
         research_controls.addWidget(finish_button)
@@ -136,8 +144,8 @@ class MainWindow(QMainWindow):
         research_layout.addWidget(self.research_status)
         self.research_table = QTableWidget(0, 7)
         self.research_table.setHorizontalHeaderLabels([
-            "CAN ID", "Кадров фон", "Кадров опыт", "Вариантов фон/опыт",
-            "Новые payload", "Исчезнувшие payload", "Кандидат"
+            "CAN ID", "Кадров фон", "Попыток", "Вариантов фона",
+            "Повторяющиеся payload (n/N)", "Все новые payload", "Кандидат"
         ])
         self.research_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.Stretch
@@ -173,15 +181,66 @@ class MainWindow(QMainWindow):
                 )
                 return
             self.experiment_rows = []
+            self.experiment_trials = []
+            self.active_trial_rows = None
             self.research_results = []
             self.research_table.setRowCount(0)
+        if phase is None and self.active_trial_rows is not None:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Сначала завершите текущую попытку."
+            )
+            return
         self.research_phase = phase
         names = {
             "baseline": "Запись фонового трафика",
-            "experiment": "Запись опыта: " + self.research_action.text().strip(),
-            None: "Этап завершён. Можно сравнить записи."
+            "experiment": "Режим опытов: " + self.research_action.text().strip()
+                + ". Запишите не менее двух отдельных попыток.",
+            None: "Этап завершён. Можно сравнить повторяемость."
         }
         self.research_status.setText(names[phase])
+
+    def start_experiment_trial(self):
+        if self.research_phase != "experiment":
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Сначала включите «Режим опытов»."
+            )
+            return
+        if self.active_trial_rows is not None:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "Текущая попытка уже записывается."
+            )
+            return
+        self.active_trial_rows = []
+        self.research_status.setText(
+            f"Записывается попытка {len(self.experiment_trials) + 1}. "
+            "Выполните одно и то же действие, затем завершите попытку."
+        )
+
+    def finish_experiment_trial(self):
+        if self.active_trial_rows is None:
+            QMessageBox.information(
+                self, "Исследование кнопок",
+                "Сейчас нет активной попытки."
+            )
+            return
+        if not self.active_trial_rows:
+            QMessageBox.warning(
+                self, "Исследование кнопок",
+                "В этой попытке не получено CAN-кадров; она не сохранена."
+            )
+            self.active_trial_rows = None
+            return
+        self.experiment_trials.append(self.active_trial_rows)
+        self.experiment_rows.extend(self.active_trial_rows)
+        count = len(self.experiment_trials)
+        self.active_trial_rows = None
+        self.research_status.setText(
+            f"Сохранено попыток: {count}. Запишите следующую попытку "
+            "того же действия или завершите режим опытов."
+        )
 
     def compare_research(self):
         if self.research_phase is not None:
@@ -190,24 +249,29 @@ class MainWindow(QMainWindow):
                 "Сначала нажмите «Завершить этап»."
             )
             return
-        if not self.baseline_rows or not self.experiment_rows:
+        if not self.baseline_rows or len(self.experiment_trials) < 2:
             QMessageBox.warning(
                 self, "Исследование кнопок",
-                "Нужны обе записи: фон и опыт с одним действием."
+                "Нужна фоновая запись и минимум две отдельные попытки."
             )
             return
-        self.research_results = analyze_button_experiment(
-            self.baseline_rows, self.experiment_rows
+        self.research_results = analyze_button_trials(
+            self.baseline_rows, self.experiment_trials, min_repeats=2
         )
         self.research_table.setRowCount(len(self.research_results))
         for row_index, item in enumerate(self.research_results):
             values = [
                 item["can_id"],
                 str(item["baseline_frames"]),
-                str(item["experiment_frames"]),
-                f'{item["baseline_variants"]}/{item["experiment_variants"]}',
-                " | ".join(item["new_payloads"]) or "—",
-                " | ".join(item["missing_payloads"]) or "—",
+                str(item["trial_count"]),
+                str(item["baseline_variants"]),
+                " | ".join(
+                    f'{p["payload"]} ({p["repeat_count"]}/{item["trial_count"]})'
+                    for p in item["candidate_payloads"] if p["candidate"]
+                ) or "—",
+                " | ".join(
+                    p["payload"] for p in item["candidate_payloads"]
+                ) or "—",
                 "Да" if item["candidate"] else "Нет",
             ]
             for column, value in enumerate(values):
@@ -217,8 +281,8 @@ class MainWindow(QMainWindow):
         candidates = sum(1 for item in self.research_results if item["candidate"])
         self.research_status.setText(
             f'Сравнение "{self.research_action.text().strip()}": '
-            f'{candidates} ID-кандидатов из {len(self.research_results)}. '
-            "Это статистические отличия, а не расшифровка кнопки."
+            f'{len(self.experiment_trials)} попыток, {candidates} ID с payload, '
+            "повторившимися минимум в двух попытках. Это кандидаты, не расшифровка."
         )
 
     def save_research_report(self):
@@ -230,18 +294,27 @@ class MainWindow(QMainWindow):
         stamp = time.strftime("%Y%m%d_%H%M%S")
         path = f"button_research_{stamp}.csv"
         fields = [
-            "action", "can_id", "baseline_frames", "experiment_frames",
-            "baseline_variants", "experiment_variants", "variant_delta",
-            "new_payloads", "missing_payloads", "candidate"
+            "action", "can_id", "baseline_frames", "trial_count",
+            "experiment_frames", "baseline_variants", "candidate_payloads",
+            "candidate"
         ]
         with open(path, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.DictWriter(file, fieldnames=fields)
             writer.writeheader()
             for item in self.research_results:
-                row = {key: item[key] for key in fields if key != "action"}
-                row["action"] = self.research_action.text().strip()
-                row["new_payloads"] = " | ".join(item["new_payloads"])
-                row["missing_payloads"] = " | ".join(item["missing_payloads"])
+                row = {
+                    "action": self.research_action.text().strip(),
+                    "can_id": item["can_id"],
+                    "baseline_frames": item["baseline_frames"],
+                    "trial_count": item["trial_count"],
+                    "experiment_frames": item["experiment_frames"],
+                    "baseline_variants": item["baseline_variants"],
+                    "candidate_payloads": " | ".join(
+                        f'{p["payload"]}:{p["repeat_count"]}/{item["trial_count"]}'
+                        for p in item["candidate_payloads"]
+                    ),
+                    "candidate": item["candidate"],
+                }
                 writer.writerow(row)
         QMessageBox.information(self, "Отчёт", f"Сохранено: {path}")
 
@@ -305,8 +378,8 @@ class MainWindow(QMainWindow):
         self.analyzer.add(frame)
         if self.research_phase == "baseline":
             self.baseline_rows.append(dict(frame))
-        elif self.research_phase == "experiment":
-            self.experiment_rows.append(dict(frame))
+        elif self.research_phase == "experiment" and self.active_trial_rows is not None:
+            self.active_trial_rows.append(dict(frame))
 
         row = self.table.rowCount()
         self.table.insertRow(row)
