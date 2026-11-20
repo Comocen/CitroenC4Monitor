@@ -25,7 +25,7 @@ class SlcanParserTests(unittest.TestCase):
     def test_invalid_lines_are_ignored(self):
         invalid = [
             "not a frame", "t1239", "tXYZ0", "t8000", "T200000000",
-            "t1231GG", "t12310000", "r1231AA", "T000000001AA",
+            "t1231GG", "t12310000", "r1231AA", "T200000001AA",
         ]
         for line in invalid:
             with self.subTest(line=line):
