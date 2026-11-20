@@ -165,6 +165,8 @@ class MainWindow(QMainWindow):
         if phase == "baseline":
             self.baseline_rows = []
             self.experiment_rows = []
+            self.experiment_trials = []
+            self.active_trial_rows = None
             self.research_results = []
             self.research_table.setRowCount(0)
         elif phase == "experiment":
@@ -334,6 +336,16 @@ class MainWindow(QMainWindow):
             return
         self.rows.clear()
         self.events.clear()
+        self.research_phase = None
+        self.baseline_rows = []
+        self.experiment_rows = []
+        self.experiment_trials = []
+        self.active_trial_rows = None
+        self.research_results = []
+        self.research_status.setText(
+            "Новый сеанс захвата: исследование кнопок сброшено."
+        )
+        self.research_table.setRowCount(0)
         self.analyzer.reset()
         self.table.setRowCount(0)
         self.stats_table.setRowCount(0)
