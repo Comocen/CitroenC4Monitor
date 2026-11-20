@@ -22,6 +22,11 @@ class IdStats:
     last_payload: bytes = b""
     changed_bytes: Counter = field(default_factory=Counter)
     transitions: int = 0
+    last_rx_ns: Optional[int] = None
+    interval_count: int = 0
+    interval_sum_ns: int = 0
+    interval_min_ns: Optional[int] = None
+    interval_max_ns: Optional[int] = None
 
 
 class CanAnalyzer:
@@ -44,6 +49,20 @@ class CanAnalyzer:
         payload = _payload(data)
 
         stats = self.by_id.setdefault(can_id, IdStats())
+        try:
+            rx_ns = int(frame["host_rx_monotonic_ns"])
+            if rx_ns < 0:
+                rx_ns = None
+        except (KeyError, TypeError, ValueError):
+            rx_ns = None
+        if rx_ns is not None and stats.last_rx_ns is not None and rx_ns >= stats.last_rx_ns:
+            interval = rx_ns - stats.last_rx_ns
+            stats.interval_count += 1
+            stats.interval_sum_ns += interval
+            stats.interval_min_ns = interval if stats.interval_min_ns is None else min(stats.interval_min_ns, interval)
+            stats.interval_max_ns = interval if stats.interval_max_ns is None else max(stats.interval_max_ns, interval)
+        if rx_ns is not None:
+            stats.last_rx_ns = rx_ns
         if stats.count and stats.last_payload != payload:
             stats.transitions += 1
             width = max(len(stats.last_payload), len(payload))
@@ -71,6 +90,19 @@ class CanAnalyzer:
                 "transitions": stats.transitions,
                 "changed_bytes": changed or "—",
                 "last_data": stats.last_data,
+                "interval_count": stats.interval_count,
+                "mean_interval_ms": (
+                    stats.interval_sum_ns / stats.interval_count / 1_000_000
+                    if stats.interval_count else None
+                ),
+                "min_interval_ms": (
+                    stats.interval_min_ns / 1_000_000
+                    if stats.interval_min_ns is not None else None
+                ),
+                "max_interval_ms": (
+                    stats.interval_max_ns / 1_000_000
+                    if stats.interval_max_ns is not None else None
+                ),
             })
         return sorted(rows, key=lambda row: (-row["count"], row["can_id"]))
 
