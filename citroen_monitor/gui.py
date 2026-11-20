@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
-from .button_research import analyze_button_trials
+from .button_research import analyze_button_bits, analyze_button_trials
 from .worker import CanWorker
 
 
@@ -29,6 +29,7 @@ class MainWindow(QMainWindow):
         self.experiment_trials = []
         self.active_trial_rows = None
         self.research_results = []
+        self.bit_results = []
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -151,6 +152,16 @@ class MainWindow(QMainWindow):
             4, QHeaderView.ResizeMode.Stretch
         )
         research_layout.addWidget(self.research_table)
+        research_layout.addWidget(QLabel(
+            "Битовый анализ: значение каждого бита в большинстве кадров каждой попытки "
+            "сравнивается с фоновым большинством. Нумерация: бит 0 — младший бит байта 0."
+        ))
+        self.bit_table = QTableWidget(0, 8)
+        self.bit_table.setHorizontalHeaderLabels([
+            "CAN ID", "Бит", "Байт", "Бит в байте",
+            "Фон", "Кандидат", "Попыток со сменой", "Кандидат"
+        ])
+        research_layout.addWidget(self.bit_table)
         self.tabs.addTab(research_page, "Исследование кнопок")
 
     def set_research_phase(self, phase):
@@ -168,7 +179,9 @@ class MainWindow(QMainWindow):
             self.experiment_trials = []
             self.active_trial_rows = None
             self.research_results = []
+            self.bit_results = []
             self.research_table.setRowCount(0)
+            self.bit_table.setRowCount(0)
         elif phase == "experiment":
             if not self.baseline_rows:
                 QMessageBox.warning(
@@ -186,7 +199,9 @@ class MainWindow(QMainWindow):
             self.experiment_trials = []
             self.active_trial_rows = None
             self.research_results = []
+            self.bit_results = []
             self.research_table.setRowCount(0)
+            self.bit_table.setRowCount(0)
         if phase is None and self.active_trial_rows is not None:
             QMessageBox.warning(
                 self, "Исследование кнопок",
@@ -260,6 +275,9 @@ class MainWindow(QMainWindow):
         self.research_results = analyze_button_trials(
             self.baseline_rows, self.experiment_trials, min_repeats=2
         )
+        self.bit_results = analyze_button_bits(
+            self.baseline_rows, self.experiment_trials, min_repeats=2
+        )
         self.research_table.setRowCount(len(self.research_results))
         for row_index, item in enumerate(self.research_results):
             values = [
@@ -280,11 +298,24 @@ class MainWindow(QMainWindow):
                 self.research_table.setItem(
                     row_index, column, QTableWidgetItem(value)
                 )
+        self.bit_table.setRowCount(len(self.bit_results))
+        for row_index, item in enumerate(self.bit_results):
+            values = [
+                item["can_id"], str(item["bit_index"]), str(item["byte_index"]),
+                str(item["bit_in_byte"]), str(item["baseline_value"]),
+                str(item["candidate_value"]),
+                f'{item["changed_trials"]}/{item["eligible_trials"]}',
+                "Да" if item["candidate"] else "Нет",
+            ]
+            for column, value in enumerate(values):
+                self.bit_table.setItem(row_index, column, QTableWidgetItem(value))
         candidates = sum(1 for item in self.research_results if item["candidate"])
+        bit_candidates = sum(1 for item in self.bit_results if item["candidate"])
         self.research_status.setText(
             f'Сравнение "{self.research_action.text().strip()}": '
             f'{len(self.experiment_trials)} попыток, {candidates} ID с payload, '
-            "повторившимися минимум в двух попытках. Это кандидаты, не расшифровка."
+            "повторившимися минимум в двух попытках; "
+            f"{bit_candidates} битовых кандидатов. Это не расшифровка."
         )
 
     def save_research_report(self):
@@ -298,7 +329,7 @@ class MainWindow(QMainWindow):
         fields = [
             "action", "can_id", "baseline_frames", "trial_count",
             "experiment_frames", "baseline_variants", "candidate_payloads",
-            "candidate"
+            "candidate", "candidate_bits"
         ]
         with open(path, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.DictWriter(file, fieldnames=fields)
@@ -316,6 +347,11 @@ class MainWindow(QMainWindow):
                         for p in item["candidate_payloads"]
                     ),
                     "candidate": item["candidate"],
+                    "candidate_bits": " | ".join(
+                        f'{bit["bit_index"]}:{bit["baseline_value"]}>{bit["candidate_value"]}'
+                        for bit in self.bit_results
+                        if bit["can_id"] == item["can_id"] and bit["candidate"]
+                    ),
                 }
                 writer.writerow(row)
         QMessageBox.information(self, "Отчёт", f"Сохранено: {path}")
@@ -342,10 +378,12 @@ class MainWindow(QMainWindow):
         self.experiment_trials = []
         self.active_trial_rows = None
         self.research_results = []
+        self.bit_results = []
         self.research_status.setText(
             "Новый сеанс захвата: исследование кнопок сброшено."
         )
         self.research_table.setRowCount(0)
+        self.bit_table.setRowCount(0)
         self.analyzer.reset()
         self.table.setRowCount(0)
         self.stats_table.setRowCount(0)
