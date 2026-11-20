@@ -286,3 +286,40 @@ class ButtonTrialRecorder:
         self.current_window = None
         self._next_window = 0
         return was_active
+
+
+def build_button_research_report_rows(
+    action, research_results, bit_results, transition_results, trial_count
+):
+    """Build a CSV-ready union of IDs found by payload, bit and transition analysis."""
+    by_id = {item["can_id"]: item for item in research_results}
+    all_ids = set(by_id)
+    all_ids.update(item["can_id"] for item in bit_results)
+    all_ids.update(item["can_id"] for item in transition_results)
+    rows = []
+    for can_id in sorted(all_ids):
+        item = by_id.get(can_id, {})
+        rows.append({
+            "action": action,
+            "can_id": can_id,
+            "baseline_frames": item.get("baseline_frames", 0),
+            "trial_count": item.get("trial_count", trial_count),
+            "experiment_frames": item.get("experiment_frames", 0),
+            "baseline_variants": item.get("baseline_variants", 0),
+            "candidate_payloads": " | ".join(
+                f'{payload["payload"]}:{payload["repeat_count"]}/{item.get("trial_count", trial_count)}'
+                for payload in item.get("candidate_payloads", [])
+            ),
+            "candidate": item.get("candidate", False),
+            "candidate_bits": " | ".join(
+                f'{bit["bit_index"]}:{bit["baseline_value"]}>{bit["candidate_value"]}'
+                for bit in bit_results
+                if bit["can_id"] == can_id and bit["candidate"]
+            ),
+            "press_release_bits": " | ".join(
+                f'{bit["bit_index"]}:{bit["released_value"]}>{bit["pressed_value"]}'
+                for bit in transition_results
+                if bit["can_id"] == can_id and bit["candidate"]
+            ),
+        })
+    return rows
