@@ -103,13 +103,17 @@ class MainWindow(QMainWindow):
         stats_layout = QVBoxLayout(stats_page)
         self.stats_summary = QLabel("Кадров: 0 | Уникальных ID: 0")
         stats_layout.addWidget(self.stats_summary)
-        self.stats_table = QTableWidget(0, 6)
+        self.stats_table = QTableWidget(0, 9)
         self.stats_table.setHorizontalHeaderLabels(
-            ["CAN ID", "Кадров", "Доля", "Переходов данных", "Изменявшиеся байты", "Последние данные"]
+            ["CAN ID", "Кадров", "Доля", "Переходов данных", "Изменявшиеся байты",
+             "Последние данные", "Средний интервал, мс", "Мин., мс", "Макс., мс"]
         )
         self.stats_table.horizontalHeader().setSectionResizeMode(
             5, QHeaderView.ResizeMode.Stretch
         )
+        stats_layout.addWidget(QLabel(
+            "Интервалы рассчитаны по времени приёма на компьютере, а не по аппаратной метке CAN-контроллера."
+        ))
         stats_layout.addWidget(self.stats_table)
         self.tabs.addTab(stats_page, "Статистика CAN")
 
@@ -539,6 +543,9 @@ class MainWindow(QMainWindow):
                 str(item["transitions"]),
                 item["changed_bytes"],
                 item["last_data"],
+                f'{item["mean_interval_ms"]:.3f}' if item["mean_interval_ms"] is not None else "—",
+                f'{item["min_interval_ms"]:.3f}' if item["min_interval_ms"] is not None else "—",
+                f'{item["max_interval_ms"]:.3f}' if item["max_interval_ms"] is not None else "—",
             ]
             for column, value in enumerate(values):
                 self.stats_table.setItem(
@@ -564,7 +571,7 @@ class MainWindow(QMainWindow):
         with open(capture_path, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.DictWriter(
                 file,
-                fieldnames=["timestamp", "can_id", "frame_type", "dlc", "data", "raw"],
+                fieldnames=["timestamp", "host_rx_monotonic_ns", "can_id", "frame_type", "dlc", "data", "raw"],
             )
             writer.writeheader()
             writer.writerows(self.rows)
