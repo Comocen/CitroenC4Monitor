@@ -9,6 +9,8 @@ import re
 PID_DEFINITIONS = {
     0x04: ("Расчётная нагрузка двигателя", "%", 1),
     0x05: ("Температура охлаждающей жидкости", "°C", 1),
+    0x06: ("Краткосрочная коррекция топлива, Bank 1", "%", 1),
+    0x07: ("Долгосрочная коррекция топлива, Bank 1", "%", 1),
     0x0A: ("Давление топлива", "kPa", 1),
     0x0B: ("Абсолютное давление во впускном коллекторе", "kPa", 1),
     0x0C: ("Обороты двигателя", "rpm", 2),
@@ -18,8 +20,6 @@ PID_DEFINITIONS = {
     0x11: ("Положение дроссельной заслонки", "%", 1),
     0x42: ("Напряжение блока управления", "V", 2),
     0x46: ("Температура окружающего воздуха", "°C", 1),
-    0x06: ("Краткосрочная коррекция топлива, Bank 1", "%", 1),
-    0x07: ("Долгосрочная коррекция топлива, Bank 1", "%", 1),
 }
 
 
@@ -68,23 +68,18 @@ def decode_pid(pid, data):
         value = word / 1000.0
     elif pid in (0x06, 0x07):
         value = (a - 128) * 100.0 / 128.0
-    else:  # guarded by PID_DEFINITIONS; keeps the mapping explicit
+    else:
         raise ValueError(f"Формула для PID 01{pid:02X} не реализована")
 
-    return {
-        "pid": f"01{pid:02X}",
-        "name": name,
-        "value": value,
-        "unit": unit,
-        "raw": raw.hex(" ").upper(),
-    }
+    return {"pid": f"01{pid:02X}", "name": name, "value": value,
+            "unit": unit, "raw": raw.hex(" ").upper()}
 
 
 def parse_mode01_response(response, requested_pid=None):
-    """Find and decode a positive Mode 01 response (41 <PID> <data...>).
+    """Decode a positive Mode 01 response (41 <PID> <data...>).
 
-    Accepts common spaced ELM327 text, optional CAN headers, and CR/LF noise.
-    Multi-frame ISO-TP responses are intentionally outside this first version.
+    Accepts spaced ELM327 text and optional CAN headers. Multi-frame
+    ISO-TP responses are intentionally outside this first version.
     """
     if isinstance(response, bytes):
         response = response.decode("ascii", errors="ignore")
@@ -105,12 +100,14 @@ def parse_mode01_response(response, requested_pid=None):
     return None
 
 
-def supported_pids(data):
-    """Decode the four-byte bitmap returned for PID 0100/0120/0140."""
+def supported_pids(data, base_pid=0x00):
+    """Decode a four-byte support bitmap; base_pid is 00, 20, or 40."""
     raw = _bytes(data)
     if len(raw) != 4:
         raise ValueError("Карта поддерживаемых PID должна содержать 4 байта")
+    base_pid = int(base_pid)
+    if base_pid not in (0x00, 0x20, 0x40):
+        raise ValueError("base_pid должен быть 00, 20 или 40")
     bitmap = int.from_bytes(raw, "big")
-    base = 1 if bitmap else 0
-    # The first bit announces support for the next 0x20-PID bitmap.
-    return [base + bit for bit in range(1, 33) if bitmap & (1 << (32 - bit))]
+    return [base_pid + bit for bit in range(1, 33)
+            if bitmap & (1 << (32 - bit))]
