@@ -14,7 +14,7 @@ from .button_research import (
     analyze_button_bits, analyze_button_trials, analyze_button_transitions,
     ButtonTrialRecorder, build_button_research_report_rows,
 )
-from .worker import CanWorker
+from .worker import AdapterCheckWorker, CanWorker
 
 
 
@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("CitroenC4Monitor — passive CAN monitor")
         self.resize(1180, 760)
         self.worker = None
+        self.adapter_check_worker = None
         self.rows = []
         self.events = []
         self.analyzer = CanAnalyzer()
@@ -150,6 +151,9 @@ class MainWindow(QMainWindow):
         bar.addWidget(QLabel("CAN kbit/s:"))
         bar.addWidget(self.rate)
 
+        self.check_adapter = QPushButton("Проверить адаптер")
+        self.check_adapter.clicked.connect(self.check_adapter_version)
+        bar.addWidget(self.check_adapter)
         self.start = QPushButton("Start (запрос listen-only)")
         self.start.clicked.connect(self.start_capture)
         bar.addWidget(self.start)
@@ -534,7 +538,36 @@ class MainWindow(QMainWindow):
             index = self.port.findText(current)
             self.port.setCurrentIndex(index if index >= 0 else 0)
 
+    def check_adapter_version(self):
+        if self.worker is not None or self.adapter_check_worker is not None:
+            return
+        if not self.port.currentText():
+            QMessageBox.warning(self, "COM", "COM-порт не найден")
+            return
+        self.adapter_check_worker = AdapterCheckWorker(self.port.currentText(), int(self.serial.currentText()))
+        self.adapter_check_worker.result.connect(self.adapter_check_succeeded)
+        self.adapter_check_worker.error.connect(self.adapter_check_failed)
+        self.adapter_check_worker.finished.connect(self.adapter_check_finished)
+        self.check_adapter.setEnabled(False)
+        self.start.setEnabled(False)
+        self.status.setText(f"Проверка {self.port.currentText()}: отправляется только запрос версии V...")
+        self.adapter_check_worker.start()
+
+    def adapter_check_succeeded(self, message):
+        self.status.setText("Проверка завершена. " + message)
+
+    def adapter_check_failed(self, message):
+        self.status.setText("Проверка не пройдена: " + message)
+        QMessageBox.warning(self, "Проверка адаптера", message)
+
+    def adapter_check_finished(self):
+        self.adapter_check_worker = None
+        self.check_adapter.setEnabled(True)
+        self.start.setEnabled(self.worker is None)
+
     def start_capture(self):
+        if self.adapter_check_worker is not None:
+            return
         if not self.port.currentText():
             QMessageBox.warning(self, "COM", "COM-порт не найден")
             return
