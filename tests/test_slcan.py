@@ -5,7 +5,7 @@ from citroen_monitor.slcan import parse_line
 
 class SlcanParserTests(unittest.TestCase):
     def test_standard_data_frame(self):
-        frame = parse_line("t1232A1B\r")
+        frame = parse_line("t1232A1B2\r")
         self.assertEqual(frame["can_id"], "123")
         self.assertEqual(frame["frame_type"], "STD")
         self.assertEqual(frame["dlc"], 2)
