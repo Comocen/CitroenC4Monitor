@@ -17,6 +17,95 @@ from .button_research import (
 from .worker import CanWorker
 
 
+
+class CanActivityChart(QWidget):
+    """Compact bar chart of the most active CAN identifiers."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.items = []
+        self.setMinimumHeight(190)
+
+    def set_items(self, items):
+        self.items = list(items[:12])
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QColor, QPainter
+        from PySide6.QtCore import Qt
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), self.palette().base())
+        if not self.items:
+            painter.setPen(self.palette().text().color())
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Пока нет принятых CAN-кадров")
+            return
+        left, right = 76, 58
+        top, row_h = 12, 14
+        max_count = max(item["count"] for item in self.items) or 1
+        available = max(20, self.width() - left - right)
+        painter.setFont(self.font())
+        for index, item in enumerate(self.items):
+            y = top + index * row_h
+            if y + row_h > self.height():
+                break
+            painter.setPen(self.palette().text().color())
+            painter.drawText(4, y + 11, str(item["can_id"]))
+            width = int(available * item["count"] / max_count)
+            painter.fillRect(left, y + 1, available, 9, QColor("#e7eaf0"))
+            painter.fillRect(left, y + 1, width, 9, QColor("#3979bd"))
+            painter.drawText(left + available + 6, y + 11, str(item["count"]))
+        painter.end()
+
+
+class ButtonCandidateChart(QWidget):
+    """Visual comparison of released/pressed bit candidates."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.items = []
+        self.setMinimumHeight(150)
+
+    def set_items(self, items):
+        self.items = list(items[:10])
+        self.setMinimumHeight(max(150, 28 * len(self.items) + 36))
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QColor, QPainter
+        from PySide6.QtCore import Qt
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), self.palette().base())
+        painter.setPen(self.palette().text().color())
+        if not self.items:
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "После сравнения здесь появятся кандидаты сигналов")
+            return
+        painter.drawText(4, 16, "CAN ID / бит")
+        painter.drawText(190, 16, "Отпущено → нажато")
+        painter.drawText(max(330, self.width() - 150), 16, "Повторы")
+        for i, item in enumerate(self.items):
+            y = 28 + i * 28
+            if y + 22 > self.height():
+                break
+            label = f'{item["can_id"]} / bit {item["bit_index"]}'
+            painter.drawText(4, y + 15, label)
+            color = QColor("#d9ead3") if item["candidate"] else QColor("#fce5cd")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(190, y, 112, 20, 4, 4)
+            painter.setPen(QColor("#202124"))
+            painter.drawText(197, y + 15,
+                             f'{item["released_value"]} → {item["pressed_value"]}')
+            painter.drawText(max(330, self.width() - 150), y + 15,
+                             f'{item["changed_trials"]}/{item["eligible_trials"]}')
+        painter.end()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -114,8 +203,10 @@ class MainWindow(QMainWindow):
             5, QHeaderView.ResizeMode.Stretch
         )
         stats_layout.addWidget(QLabel(
-            "Интервалы рассчитаны по времени приёма на компьютере, а не по аппаратной метке CAN-контроллера."
+            "Активность: 12 наиболее частых CAN ID. Интервалы рассчитаны по времени приёма на компьютере."
         ))
+        self.can_activity_chart = CanActivityChart()
+        stats_layout.addWidget(self.can_activity_chart)
         stats_layout.addWidget(self.stats_table)
         self.tabs.addTab(stats_page, "Статистика CAN")
 
@@ -166,6 +257,14 @@ class MainWindow(QMainWindow):
         self.research_status = QLabel("Этап не выбран. Сначала запишите фоновый трафик.")
         self.research_status.setWordWrap(True)
         research_layout.addWidget(self.research_status)
+        research_layout.addWidget(QLabel(
+            "Визуальная карта переходных битов: зелёный — повторяемый кандидат, "
+            "оранжевый — наблюдаемое изменение без достаточной повторяемости."
+        ))
+        self.button_candidate_chart = ButtonCandidateChart()
+        research_layout.addWidget(self.button_candidate_chart)
+        self.button_candidate_summary = QLabel("Кандидаты не рассчитаны.")
+        research_layout.addWidget(self.button_candidate_summary)
         self.research_table = QTableWidget(0, 7)
         self.research_table.setHorizontalHeaderLabels([
             "CAN ID", "Кадров фон", "Попыток", "Вариантов фона",
@@ -389,6 +488,11 @@ class MainWindow(QMainWindow):
         candidates = sum(1 for item in self.research_results if item["candidate"])
         bit_candidates = sum(1 for item in self.bit_results if item["candidate"])
         transition_candidates = sum(1 for item in self.transition_results if item["candidate"])
+        self.button_candidate_chart.set_items(self.transition_results)
+        self.button_candidate_summary.setText(
+            f"Payload-кандидатов: {candidates} | битовых: {bit_candidates} | "
+            f"переходных: {transition_candidates}. Показано до 10 переходных позиций."
+        )
         self.research_status.setText(
             f'Сравнение "{self.research_action.text().strip()}": '
             f'{len(self.experiment_trials)} попыток, {candidates} ID с payload, '
@@ -455,6 +559,9 @@ class MainWindow(QMainWindow):
         self.research_table.setRowCount(0)
         self.bit_table.setRowCount(0)
         self.transition_table.setRowCount(0)
+        self.button_candidate_chart.set_items([])
+        self.button_candidate_summary.setText("Кандидаты не рассчитаны.")
+        self.can_activity_chart.set_items([])
         self.analyzer.reset()
         self.table.setRowCount(0)
         self.stats_table.setRowCount(0)
@@ -519,6 +626,7 @@ class MainWindow(QMainWindow):
             f"Типы: {summary['frame_types']}"
         )
         rows = self.analyzer.snapshot()
+        self.can_activity_chart.set_items(rows)
         self.stats_table.setRowCount(len(rows))
         for row_index, item in enumerate(rows):
             values = [
