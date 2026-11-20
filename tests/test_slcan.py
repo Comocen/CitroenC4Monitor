@@ -9,7 +9,7 @@ class SlcanParserTests(unittest.TestCase):
         self.assertEqual(frame["can_id"], "123")
         self.assertEqual(frame["frame_type"], "STD")
         self.assertEqual(frame["dlc"], 2)
-        self.assertEqual(frame["data"], "A1 B")
+        self.assertEqual(frame["data"], "A1 B2")
 
     def test_extended_data_frame(self):
         frame = parse_line("T0000012381122334455667788")
