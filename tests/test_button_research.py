@@ -3,6 +3,7 @@ import unittest
 from citroen_monitor.button_research import (
     analyze_button_bits,
     analyze_button_trials,
+    analyze_button_transitions,
 )
 
 
@@ -31,6 +32,39 @@ class ButtonResearchTests(unittest.TestCase):
         result = analyze_button_trials(baseline, trials)
         self.assertFalse(result[0]["candidate"])
         self.assertEqual(result[0]["candidate_payloads"], [])
+
+
+    def test_press_bit_flips_and_restores_after_release(self):
+        def rows(value):
+            return [{"can_id": "100", "data": "%02X" % value} for _ in range(3)]
+        trials = [
+            {"released_before": rows(0), "pressed": rows(1), "released_after": rows(0)},
+            {"released_before": rows(0), "pressed": rows(1), "released_after": rows(0)},
+            {"released_before": rows(0), "pressed": rows(1), "released_after": rows(0)},
+        ]
+        result = analyze_button_transitions(trials)
+        bit = next(item for item in result if item["bit_index"] == 0)
+        self.assertEqual(bit["released_value"], 0)
+        self.assertEqual(bit["pressed_value"], 1)
+        self.assertEqual(bit["changed_trials"], 3)
+        self.assertTrue(bit["candidate"])
+
+    def test_transition_rejected_when_release_does_not_restore(self):
+        def rows(value):
+            return [{"can_id": "100", "data": "%02X" % value} for _ in range(3)]
+        trials = [
+            {"released_before": rows(0), "pressed": rows(1), "released_after": rows(1)},
+            {"released_before": rows(0), "pressed": rows(1), "released_after": rows(1)},
+        ]
+        self.assertEqual(analyze_button_transitions(trials), [])
+
+    def test_transition_rejects_ambiguous_window(self):
+        trials = [{
+            "released_before": [{"can_id": "100", "data": "00"}, {"can_id": "100", "data": "01"}],
+            "pressed": [{"can_id": "100", "data": "01"}],
+            "released_after": [{"can_id": "100", "data": "00"}],
+        }]
+        self.assertEqual(analyze_button_transitions(trials), [])
 
     def test_empty_trials(self):
         self.assertEqual(analyze_button_trials([], []), [])
