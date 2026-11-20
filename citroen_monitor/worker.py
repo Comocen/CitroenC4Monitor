@@ -24,7 +24,7 @@ class CanWorker(QThread):
             if not cmd: raise ValueError('Поддерживаются только 500/250/125 kbit/s в этом прототипе')
             self.ser.write(b'C\r'); time.sleep(0.05); self.ser.write(cmd); time.sleep(0.05)
             self.ser.write(b'L\r')
-            self.status.emit(f'{self.port}: listen-only, {self.can_bitrate} kbit/s')
+            self.status.emit(f'{self.port}: команда listen-only отправлена (ответ адаптера не проверен), {self.can_bitrate} kbit/s')
             while not self._stop.is_set():
                 raw=self.ser.readline()
                 if not raw: continue
