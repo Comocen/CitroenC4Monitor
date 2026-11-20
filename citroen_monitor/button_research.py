@@ -217,3 +217,72 @@ def analyze_button_transitions(trials, min_repeats=2):
         not item["candidate"], -item["changed_trials"],
         item["can_id"], item["bit_index"]
     ))
+
+
+class ButtonTrialRecorder:
+    """Validated state machine for three-window passive button experiments."""
+
+    WINDOWS = ("released_before", "pressed", "released_after")
+
+    def __init__(self, min_frames_per_window=3):
+        if min_frames_per_window < 1:
+            raise ValueError("min_frames_per_window must be at least 1")
+        self.min_frames_per_window = min_frames_per_window
+        self.active = None
+        self.current_window = None
+        self._next_window = 0
+
+    def begin(self):
+        if self.active is not None:
+            raise RuntimeError("A trial is already active")
+        self.active = {name: [] for name in self.WINDOWS}
+        self.current_window = None
+        self._next_window = 0
+
+    def start_window(self, name):
+        if self.active is None:
+            raise RuntimeError("No active trial")
+        if self._next_window >= len(self.WINDOWS):
+            raise RuntimeError("All trial windows have already been recorded")
+        expected = self.WINDOWS[self._next_window]
+        if name != expected:
+            raise ValueError("Expected window: " + expected)
+        if self.current_window is not None:
+            count = len(self.active[self.current_window])
+            if count < self.min_frames_per_window:
+                raise ValueError(
+                    f"Window {self.current_window} has {count} frames; "
+                    f"at least {self.min_frames_per_window} required"
+                )
+        self.current_window = name
+        self._next_window += 1
+
+    def add_frame(self, frame):
+        if self.active is not None and self.current_window is not None:
+            self.active[self.current_window].append(dict(frame))
+
+    def finish(self):
+        if self.active is None:
+            raise RuntimeError("No active trial")
+        if self._next_window != len(self.WINDOWS):
+            raise RuntimeError("All three windows must be recorded in order")
+        if self.current_window is None:
+            raise RuntimeError("No active window")
+        count = len(self.active[self.current_window])
+        if count < self.min_frames_per_window:
+            raise RuntimeError(
+                f"Window {self.current_window} has {count} frames; "
+                f"at least {self.min_frames_per_window} required"
+            )
+        result = self.active
+        self.active = None
+        self.current_window = None
+        self._next_window = 0
+        return result
+
+    def cancel(self):
+        was_active = self.active is not None
+        self.active = None
+        self.current_window = None
+        self._next_window = 0
+        return was_active
