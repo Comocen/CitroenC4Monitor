@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(QLabel("CAN kbit/s:"))
         bar.addWidget(self.rate)
 
-        self.start = QPushButton("Start listen-only")
+        self.start = QPushButton("Start (запрос listen-only)")
         self.start.clicked.connect(self.start_capture)
         bar.addWidget(self.start)
         self.stop = QPushButton("Stop")
