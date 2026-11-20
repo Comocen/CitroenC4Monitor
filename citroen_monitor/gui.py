@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
         )
         self.research_table.setRowCount(0)
         self.bit_table.setRowCount(0)
+        self.transition_table.setRowCount(0)
         self.analyzer.reset()
         self.table.setRowCount(0)
         self.stats_table.setRowCount(0)
