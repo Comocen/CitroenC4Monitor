@@ -4,6 +4,7 @@ from citroen_monitor.button_research import (
     analyze_button_bits,
     analyze_button_trials,
     analyze_button_transitions,
+    ButtonTrialRecorder,
 )
 
 
@@ -65,6 +66,47 @@ class ButtonResearchTests(unittest.TestCase):
             "released_after": [{"can_id": "100", "data": "00"}],
         }]
         self.assertEqual(analyze_button_transitions(trials), [])
+
+
+    def test_trial_recorder_requires_windows_in_order_and_minimum_frames(self):
+        recorder = ButtonTrialRecorder(min_frames_per_window=2)
+        recorder.begin()
+        with self.assertRaises(ValueError):
+            recorder.start_window("pressed")
+        recorder.start_window("released_before")
+        recorder.add_frame({"can_id": "100", "data": "00"})
+        with self.assertRaises(ValueError):
+            recorder.start_window("released_after")
+        recorder.add_frame({"can_id": "100", "data": "00"})
+        recorder.start_window("pressed")
+        recorder.add_frame({"can_id": "100", "data": "01"})
+        recorder.add_frame({"can_id": "100", "data": "01"})
+        recorder.start_window("released_after")
+        recorder.add_frame({"can_id": "100", "data": "00"})
+        recorder.add_frame({"can_id": "100", "data": "00"})
+        result = recorder.finish()
+        self.assertEqual(len(result["released_before"]), 2)
+        self.assertEqual(len(result["pressed"]), 2)
+        self.assertEqual(len(result["released_after"]), 2)
+        self.assertIsNone(recorder.active)
+
+    def test_trial_recorder_rejects_short_or_incomplete_windows(self):
+        recorder = ButtonTrialRecorder(min_frames_per_window=2)
+        recorder.begin()
+        recorder.start_window("released_before")
+        recorder.add_frame({"can_id": "100", "data": "00"})
+        with self.assertRaises(ValueError):
+            recorder.start_window("pressed")
+        with self.assertRaises(RuntimeError):
+            recorder.finish()
+
+    def test_trial_recorder_cancel_resets_state(self):
+        recorder = ButtonTrialRecorder()
+        recorder.begin()
+        self.assertTrue(recorder.cancel())
+        self.assertFalse(recorder.cancel())
+        recorder.begin()
+        recorder.start_window("released_before")
 
     def test_empty_trials(self):
         self.assertEqual(analyze_button_trials([], []), [])
