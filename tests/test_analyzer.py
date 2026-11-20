@@ -38,5 +38,27 @@ class CanAnalyzerTests(unittest.TestCase):
         self.assertEqual(result[0]["experiment_frames"], 2)
 
 
+
+    def test_host_receive_intervals_are_reported_per_can_id(self):
+        analyzer = CanAnalyzer()
+        analyzer.add({"can_id": "100", "data": "00", "frame_type": "STD", "host_rx_monotonic_ns": 1_000_000})
+        analyzer.add({"can_id": "200", "data": "00", "frame_type": "STD", "host_rx_monotonic_ns": 2_000_000})
+        analyzer.add({"can_id": "100", "data": "01", "frame_type": "STD", "host_rx_monotonic_ns": 4_000_000})
+        row = next(item for item in analyzer.snapshot() if item["can_id"] == "100")
+        self.assertEqual(row["interval_count"], 1)
+        self.assertEqual(row["mean_interval_ms"], 3.0)
+        self.assertEqual(row["min_interval_ms"], 3.0)
+        self.assertEqual(row["max_interval_ms"], 3.0)
+
+    def test_missing_or_non_monotonic_receive_time_is_ignored(self):
+        analyzer = CanAnalyzer()
+        analyzer.add({"can_id": "100", "data": "00", "frame_type": "STD", "host_rx_monotonic_ns": 5})
+        analyzer.add({"can_id": "100", "data": "01", "frame_type": "STD"})
+        analyzer.add({"can_id": "100", "data": "02", "frame_type": "STD", "host_rx_monotonic_ns": 4})
+        row = analyzer.snapshot()[0]
+        self.assertEqual(row["interval_count"], 0)
+        self.assertIsNone(row["mean_interval_ms"])
+
+
 if __name__ == "__main__":
     unittest.main()
