@@ -220,10 +220,14 @@ class MainWindow(QMainWindow):
             self.experiment_rows = []
             self.experiment_trials = []
             self.active_trial_rows = None
+            self.active_trial_state = None
+            self.transition_trials = []
+            self.transition_results = []
             self.research_results = []
             self.bit_results = []
             self.research_table.setRowCount(0)
             self.bit_table.setRowCount(0)
+            self.transition_table.setRowCount(0)
         if phase is None and self.active_trial_rows is not None:
             QMessageBox.warning(
                 self, "Исследование кнопок",
@@ -380,7 +384,7 @@ class MainWindow(QMainWindow):
         fields = [
             "action", "can_id", "baseline_frames", "trial_count",
             "experiment_frames", "baseline_variants", "candidate_payloads",
-            "candidate", "candidate_bits"
+            "candidate", "candidate_bits", "press_release_bits"
         ]
         with open(path, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.DictWriter(file, fieldnames=fields)
@@ -401,6 +405,11 @@ class MainWindow(QMainWindow):
                     "candidate_bits": " | ".join(
                         f'{bit["bit_index"]}:{bit["baseline_value"]}>{bit["candidate_value"]}'
                         for bit in self.bit_results
+                        if bit["can_id"] == item["can_id"] and bit["candidate"]
+                    ),
+                    "press_release_bits": " | ".join(
+                        f'{bit["bit_index"]}:{bit["released_value"]}>{bit["pressed_value"]}'
+                        for bit in self.transition_results
                         if bit["can_id"] == item["can_id"] and bit["candidate"]
                     ),
                 }
