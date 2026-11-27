@@ -1,12 +1,15 @@
 """GUI for passive CAN capture, event annotation and traffic statistics."""
 import csv
+import json
 import time
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QPushButton, QTableWidget, QTableWidgetItem, QLineEdit,
-    QMessageBox, QTabWidget, QHeaderView
+    QMessageBox, QTabWidget, QHeaderView, QCheckBox, QFileDialog
 )
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import Qt
 from PySide6.QtSerialPort import QSerialPortInfo
 
 from .analyzer import CanAnalyzer
@@ -15,6 +18,7 @@ from .button_research import (
     ButtonTrialRecorder, build_button_research_report_rows,
 )
 from .worker import AdapterCheckWorker, CanWorker
+from .signal_monitor import SignalDefinition, decode_signal_value, validate_definition
 
 
 
@@ -103,6 +107,48 @@ class ButtonCandidateChart(QWidget):
                              f'{item["released_value"]} → {item["pressed_value"]}')
             painter.drawText(max(330, self.width() - 150), y + 15,
                              f'{item["changed_trials"]}/{item["eligible_trials"]}')
+        painter.end()
+
+
+class SignalHistoryChart(QWidget):
+    """Dependency-free plot of recent decoded signal values."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.values = []
+        self.setMinimumHeight(190)
+
+    def set_values(self, values):
+        self.values = list(values[-120:])
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), self.palette().base())
+        if len(self.values) < 2:
+            painter.setPen(self.palette().text().color())
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "График появится после получения нескольких значений")
+            painter.end()
+            return
+        left, right, top, bottom = 48, 12, 12, 24
+        plot_w = max(1, self.width() - left - right)
+        plot_h = max(1, self.height() - top - bottom)
+        low, high = min(self.values), max(self.values)
+        if high == low:
+            padding = max(abs(high) * 0.05, 1.0)
+            low, high = low - padding, high + padding
+        painter.setPen(self.palette().text().color())
+        painter.drawText(4, top + 8, f"{high:.3g}")
+        painter.drawText(4, top + plot_h, f"{low:.3g}")
+        painter.setPen(QColor("#3979bd"))
+        points = []
+        for index, value in enumerate(self.values):
+            x = left + int(plot_w * index / max(1, len(self.values) - 1))
+            y = top + int(plot_h * (high - value) / (high - low))
+            points.append((x, y))
+        for first, second in zip(points, points[1:]):
+            painter.drawLine(first[0], first[1], second[0], second[1])
         painter.end()
 
 
@@ -293,6 +339,10 @@ class MainWindow(QMainWindow):
         self.transition_table.setHorizontalHeaderLabels(["CAN ID", "Бит", "Отпущено", "Нажато", "Повторов", "Подходящих попыток", "Кандидат"])
         research_layout.addWidget(self.transition_table)
         self.tabs.addTab(research_page, "Исследование кнопок")
+
+        self.signal_definitions = []
+        self.signal_page = self.build_signal_page()
+        self.tabs.addTab(self.signal_page, "Сигналы и приборы")
         self.configure_tooltips()
 
 
