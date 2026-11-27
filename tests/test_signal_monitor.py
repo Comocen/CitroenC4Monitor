@@ -27,6 +27,10 @@ class SignalMonitorTests(unittest.TestCase):
         self.assertEqual(definition.can_id, "123")
         self.assertEqual(definition.name, "RPM")
 
+    def test_validate_accepts_prefixed_can_id(self):
+        definition = validate_definition(SignalDefinition("headlamp", "0x123", 2, 1))
+        self.assertEqual(definition.normalized_id(), "123")
+
     def test_validate_rejects_invalid_can_id(self):
         with self.assertRaises(ValueError):
             validate_definition(SignalDefinition("bad", "xyz", 0, 1))
