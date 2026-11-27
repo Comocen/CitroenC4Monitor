@@ -842,6 +842,7 @@ class MainWindow(QMainWindow):
             "повторившимися минимум в двух попытках; "
             f"{bit_candidates} обычных битовых и {transition_candidates} переходных кандидатов. Это не расшифровка."
         )
+        self.add_transition_candidates_to_signals()
 
     def add_transition_candidates_to_signals(self):
         """Add repeatable press/release bit candidates as raw one-bit signals."""
