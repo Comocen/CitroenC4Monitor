@@ -301,6 +301,10 @@ class MainWindow(QMainWindow):
         compare_button = QPushButton("Сравнить")
         compare_button.clicked.connect(self.compare_research)
         research_controls.addWidget(compare_button)
+        auto_add_button = QPushButton("Автодобавление кандидатов в сигналы")
+        auto_add_button.setToolTip("После сравнения повторяемые биты «отпущено → нажато → отпущено» автоматически добавляются как сигналы-кандидаты с factor=1 и unit=raw.")
+        auto_add_button.clicked.connect(self.add_transition_candidates_to_signals)
+        research_controls.addWidget(auto_add_button)
         save_report_button = QPushButton("Сохранить отчёт CSV")
         save_report_button.clicked.connect(self.save_research_report)
         research_controls.addWidget(save_report_button)
@@ -837,6 +841,63 @@ class MainWindow(QMainWindow):
             f'{len(self.experiment_trials)} попыток, {candidates} ID с payload, '
             "повторившимися минимум в двух попытках; "
             f"{bit_candidates} обычных битовых и {transition_candidates} переходных кандидатов. Это не расшифровка."
+        )
+
+    def add_transition_candidates_to_signals(self):
+        """Add repeatable press/release bit candidates as raw one-bit signals."""
+        action = self.research_action.text().strip() or "Неизвестное действие"
+        candidates = [item for item in self.transition_results if item.get("candidate")]
+        if not candidates:
+            self.research_status.setText(
+                "Нет повторяемых переходных кандидатов для автодобавления. "
+                "Нужно минимум две корректные попытки «отпущено → нажато → отпущено»."
+            )
+            return
+
+        added = 0
+        skipped = 0
+        for item in candidates:
+            can_id = str(item["can_id"]).upper().lstrip("0") or "0"
+            bit_index = int(item["bit_index"])
+            if any(
+                signal["definition"].normalized_id() == can_id
+                and signal["definition"].start_bit == bit_index
+                and signal["definition"].bit_length == 1
+                for signal in self.signal_definitions
+            ):
+                skipped += 1
+                continue
+            name = f"{action} — 0x{can_id} bit {bit_index} (кандидат)"
+            base_name = name
+            suffix = 2
+            existing_names = {
+                signal["definition"].name.casefold()
+                for signal in self.signal_definitions
+            }
+            while name.casefold() in existing_names:
+                name = f"{base_name} #{suffix}"
+                suffix += 1
+            definition = validate_definition(SignalDefinition(
+                name=name, can_id=can_id, start_bit=bit_index,
+                bit_length=1, factor=1.0, offset=0.0,
+                unit="raw", signed=False,
+            ))
+            self.signal_definitions.append({
+                "definition": definition, "latest": None, "count": 0, "history": []
+            })
+            added += 1
+
+        self.refresh_signal_table()
+        if added:
+            self.signal_table.selectRow(len(self.signal_definitions) - 1)
+            self.signal_status.setText(
+                f"Автоматически добавлено кандидатов: {added}. "
+                "Это сырые однобитные сигналы (0/1), а не подтверждённые названия/статусы."
+            )
+            self.tabs.setCurrentWidget(self.signal_page)
+        self.research_status.setText(
+            f'Действие «{action}»: добавлено в «Сигналы и приборы» {added}; '
+            f"пропущено уже существующих: {skipped}. Все кандидаты требуют проверки."
         )
 
     def save_research_report(self):
