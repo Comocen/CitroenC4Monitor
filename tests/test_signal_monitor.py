@@ -31,6 +31,10 @@ class SignalMonitorTests(unittest.TestCase):
         definition = validate_definition(SignalDefinition("headlamp", "0x123", 2, 1))
         self.assertEqual(definition.normalized_id(), "123")
 
+    def test_decode_rejects_non_finite_scaling(self):
+        with self.assertRaises(ValueError):
+            decode_signal_value("01", 0, 1, factor=float("nan"))
+
     def test_validate_rejects_invalid_can_id(self):
         with self.assertRaises(ValueError):
             validate_definition(SignalDefinition("bad", "xyz", 0, 1))
