@@ -50,6 +50,8 @@ def validate_definition(definition):
     if not name:
         raise ValueError("Укажите название сигнала")
     can_id = str(definition.can_id).strip()
+    if can_id.lower().startswith("0x"):
+        can_id = can_id[2:]
     if not can_id or any(ch not in "0123456789abcdefABCDEF" for ch in can_id):
         raise ValueError("CAN ID должен быть шестнадцатеричным числом")
     if int(can_id, 16) > 0x1FFFFFFF:
