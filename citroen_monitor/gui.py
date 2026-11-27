@@ -529,6 +529,7 @@ class MainWindow(QMainWindow):
 
     def update_signal_monitor(self, frame):
         frame_id = str(frame.get("can_id", "")).upper().lstrip("0") or "0"
+        updated = False
         for item in self.signal_definitions:
             d = item["definition"]
             if frame_id != d.normalized_id():
@@ -542,10 +543,11 @@ class MainWindow(QMainWindow):
                 continue
             item["latest"] = value
             item["count"] += 1
+            updated = True
             item["history"].append(value)
             if len(item["history"]) > 120:
                 del item["history"][:-120]
-        if self.signal_definitions:
+        if updated:
             self.refresh_signal_table()
             self.refresh_selected_signal()
 
@@ -929,6 +931,12 @@ class MainWindow(QMainWindow):
         self.button_candidate_summary.setText("Кандидаты не рассчитаны.")
         self.can_activity_chart.set_items([])
         self.analyzer.reset()
+        for signal in self.signal_definitions:
+            signal["latest"] = None
+            signal["count"] = 0
+            signal["history"] = []
+        self.refresh_signal_table()
+        self.refresh_selected_signal()
         self.table.setRowCount(0)
         self.stats_table.setRowCount(0)
         self.stats_summary.setText("Кадров: 0 | Уникальных ID: 0")
