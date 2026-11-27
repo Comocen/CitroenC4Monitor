@@ -1,5 +1,6 @@
 """Decode user-configured signals from passively received classic CAN frames."""
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,8 @@ def decode_signal_value(data, start_bit, bit_length, factor=1.0, offset=0.0,
         raise ValueError("Configured bit range exceeds received payload")
     if not isinstance(factor, (int, float)) or not isinstance(offset, (int, float)):
         raise ValueError("Factor and offset must be numbers")
+    if not math.isfinite(factor) or not math.isfinite(offset):
+        raise ValueError("Factor and offset must be finite numbers")
 
     raw = int.from_bytes(payload, byteorder="little", signed=False)
     raw = (raw >> start_bit) & ((1 << bit_length) - 1)
@@ -60,6 +63,8 @@ def validate_definition(definition):
         raise ValueError("Проверьте начальный бит и длину сигнала (1..64)")
     if definition.start_bit + definition.bit_length > 64:
         raise ValueError("Сигнал не должен выходить за пределы 8 байт")
+    if not math.isfinite(definition.factor) or not math.isfinite(definition.offset):
+        raise ValueError("Множитель и смещение должны быть конечными числами")
     if definition.factor == 0:
         raise ValueError("Множитель не должен быть равен нулю")
     return SignalDefinition(
