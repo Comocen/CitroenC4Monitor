@@ -391,6 +391,10 @@ class MainWindow(QMainWindow):
         self.tabs.setTabToolTip(0, "Живой список кадров, которые адаптер передаёт программе.")
         self.tabs.setTabToolTip(1, "Частота CAN ID, изменения данных и интервалы между кадрами.")
         self.tabs.setTabToolTip(2, "Сравнение трафика до, во время и после нажатия кнопок.")
+        self.tabs.setTabToolTip(3, "Настройка декодирования найденных CAN-сигналов и живые индикаторы/графики. Значения требуют проверенной карты сигналов.")
+        self.signal_table.setToolTip("Список пользовательских декодеров. Значение обновляется только по кадрам с совпадающим CAN ID.")
+        self.signal_chart.setToolTip("История последних 120 декодированных значений выбранного сигнала.")
+        self.signal_live_value.setToolTip("Текущая интерпретация выбранного сигнала; отсутствие данных не означает нулевое значение.")
 
         header_help = {
             self.table: ["Время получения кадра на ПК", "Идентификатор CAN-сообщения", "Тип классического CAN-кадра", "Длина данных в байтах", "Байты полезных данных", "Исходная строка от адаптера"],
@@ -404,6 +408,224 @@ class MainWindow(QMainWindow):
                 item = table.horizontalHeaderItem(column)
                 if item is not None:
                     item.setToolTip(description)
+
+    def build_signal_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel(
+            "Настройте декодирование найденного CAN-сигнала. Данные только читаются; "
+            "программа не отправляет CAN-команды. Intel: bit 0 — младший бит byte 0."
+        ))
+        form = QHBoxLayout()
+        layout.addLayout(form)
+        self.signal_name = QLineEdit()
+        self.signal_name.setPlaceholderText("Ближний свет / RPM")
+        self.signal_can_id = QLineEdit()
+        self.signal_can_id.setPlaceholderText("CAN ID hex")
+        self.signal_start_bit = QLineEdit("0")
+        self.signal_bit_length = QLineEdit("1")
+        self.signal_factor = QLineEdit("1")
+        self.signal_offset = QLineEdit("0")
+        self.signal_unit = QLineEdit()
+        self.signal_unit.setPlaceholderText("rpm, km/h, °C")
+        for widget, label in [
+            (self.signal_name, "Название"), (self.signal_can_id, "CAN ID"),
+            (self.signal_start_bit, "Начальный бит"), (self.signal_bit_length, "Длина, бит"),
+            (self.signal_factor, "Множитель"), (self.signal_offset, "Смещение"),
+            (self.signal_unit, "Единица")
+        ]:
+            col = QVBoxLayout()
+            col.addWidget(QLabel(label))
+            col.addWidget(widget)
+            form.addLayout(col)
+        self.signal_signed = QCheckBox("Знаковый")
+        form.addWidget(self.signal_signed)
+        add_button = QPushButton("Добавить сигнал")
+        add_button.clicked.connect(self.add_signal_definition)
+        form.addWidget(add_button)
+
+        actions = QHBoxLayout()
+        layout.addLayout(actions)
+        remove_button = QPushButton("Удалить выбранный")
+        remove_button.clicked.connect(self.remove_signal_definition)
+        actions.addWidget(remove_button)
+        save_button = QPushButton("Сохранить профиль…")
+        save_button.clicked.connect(self.save_signal_profile)
+        actions.addWidget(save_button)
+        load_button = QPushButton("Загрузить профиль…")
+        load_button.clicked.connect(self.load_signal_profile)
+        actions.addWidget(load_button)
+        actions.addStretch(1)
+
+        self.signal_table = QTableWidget(0, 7)
+        self.signal_table.setHorizontalHeaderLabels([
+            "Сигнал", "CAN ID", "Биты", "Формула", "Текущее значение", "Ед.", "Кадров"
+        ])
+        self.signal_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.signal_table.itemSelectionChanged.connect(self.refresh_selected_signal)
+        layout.addWidget(self.signal_table)
+        self.signal_live_value = QLabel("Выберите сигнал. Для обновления нужен активный захват CAN.")
+        self.signal_live_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.signal_live_value.setMinimumHeight(54)
+        layout.addWidget(self.signal_live_value)
+        self.signal_chart = SignalHistoryChart()
+        layout.addWidget(self.signal_chart)
+        self.signal_status = QLabel(
+            "Нет сигналов. Для света обычно проверяют отдельный бит; для оборотов, скорости "
+            "и температуры нужны подтверждённые диапазон битов, множитель и смещение."
+        )
+        self.signal_status.setWordWrap(True)
+        layout.addWidget(self.signal_status)
+        return page
+
+    def add_signal_definition(self):
+        try:
+            definition = validate_definition(SignalDefinition(
+                name=self.signal_name.text(), can_id=self.signal_can_id.text(),
+                start_bit=int(self.signal_start_bit.text()),
+                bit_length=int(self.signal_bit_length.text()),
+                factor=float(self.signal_factor.text().replace(",", ".")),
+                offset=float(self.signal_offset.text().replace(",", ".")),
+                unit=self.signal_unit.text(), signed=self.signal_signed.isChecked(),
+            ))
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Настройка сигнала", str(exc))
+            return
+        if any(x["definition"].name.casefold() == definition.name.casefold()
+               for x in self.signal_definitions):
+            QMessageBox.warning(self, "Настройка сигнала", "Название уже используется.")
+            return
+        self.signal_definitions.append({
+            "definition": definition, "latest": None, "count": 0, "history": []
+        })
+        self.refresh_signal_table()
+        self.signal_table.selectRow(len(self.signal_definitions) - 1)
+        self.signal_status.setText("Сигнал добавлен. Ожидание подходящих кадров с указанным CAN ID.")
+
+    def remove_signal_definition(self):
+        row = self.signal_table.currentRow()
+        if 0 <= row < len(self.signal_definitions):
+            del self.signal_definitions[row]
+            self.refresh_signal_table()
+            self.signal_live_value.setText("Сигнал удалён.")
+            self.signal_chart.set_values([])
+
+    def refresh_signal_table(self):
+        self.signal_table.setRowCount(len(self.signal_definitions))
+        for row, item in enumerate(self.signal_definitions):
+            d = item["definition"]
+            value = item["latest"]
+            if value is None:
+                shown = "нет данных"
+            elif d.bit_length == 1:
+                shown = "ВКЛ" if value != 0 else "ВЫКЛ"
+            else:
+                shown = f"{value:.5g}"
+            values = [d.name, "0x" + d.normalized_id(),
+                      f"{d.start_bit}+{d.bit_length}",
+                      f"x{d.factor:g} {d.offset:+g}", shown, d.unit, str(item["count"])]
+            for column, text in enumerate(values):
+                self.signal_table.setItem(row, column, QTableWidgetItem(text))
+
+    def update_signal_monitor(self, frame):
+        frame_id = str(frame.get("can_id", "")).upper().lstrip("0") or "0"
+        for item in self.signal_definitions:
+            d = item["definition"]
+            if frame_id != d.normalized_id():
+                continue
+            try:
+                value = decode_signal_value(
+                    frame.get("data", ""), d.start_bit, d.bit_length,
+                    d.factor, d.offset, d.signed
+                )
+            except ValueError:
+                continue
+            item["latest"] = value
+            item["count"] += 1
+            item["history"].append(value)
+            if len(item["history"]) > 120:
+                del item["history"][:-120]
+        if self.signal_definitions:
+            self.refresh_signal_table()
+            self.refresh_selected_signal()
+
+    def refresh_selected_signal(self):
+        row = self.signal_table.currentRow()
+        if not 0 <= row < len(self.signal_definitions):
+            return
+        item = self.signal_definitions[row]
+        d, value = item["definition"], item["latest"]
+        if value is None:
+            display = "НЕТ ДАННЫХ"
+            detail = "Нет подходящего кадра. Проверьте CAN ID, захват и длину payload."
+        elif d.bit_length == 1:
+            display = "ВКЛЮЧЕНО" if value != 0 else "ВЫКЛЮЧЕНО"
+            detail = f"Декодированное значение: {value:g} {d.unit}".strip()
+        else:
+            display = f"{value:.5g} {d.unit}".strip()
+            detail = f"Подходящих кадров: {item['count']}"
+        self.signal_live_value.setText(f"{d.name}: {display}\n{detail}")
+        self.signal_chart.set_values(item["history"])
+
+    def save_signal_profile(self):
+        if not self.signal_definitions:
+            QMessageBox.information(self, "Профиль", "Нет сигналов для сохранения.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить профиль", "can_signals.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        payload = []
+        for item in self.signal_definitions:
+            d = item["definition"]
+            payload.append({
+                "name": d.name, "can_id": d.can_id, "start_bit": d.start_bit,
+                "bit_length": d.bit_length, "factor": d.factor, "offset": d.offset,
+                "unit": d.unit, "signed": d.signed,
+            })
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(payload, file, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            QMessageBox.warning(self, "Профиль", f"Ошибка сохранения: {exc}")
+            return
+        self.signal_status.setText(f"Профиль сохранён: {path}")
+
+    def load_signal_profile(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Загрузить профиль", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                payload = json.load(file)
+            if not isinstance(payload, list):
+                raise ValueError("Ожидался список сигналов.")
+            definitions = []
+            for item in payload:
+                if not isinstance(item, dict):
+                    raise ValueError("Некорректная запись сигнала.")
+                definitions.append(validate_definition(SignalDefinition(
+                    name=item["name"], can_id=item["can_id"],
+                    start_bit=int(item["start_bit"]), bit_length=int(item["bit_length"]),
+                    factor=float(item.get("factor", 1)), offset=float(item.get("offset", 0)),
+                    unit=item.get("unit", ""), signed=bool(item.get("signed", False)),
+                )))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            QMessageBox.warning(self, "Профиль", f"Ошибка загрузки: {exc}")
+            return
+        self.signal_definitions = [
+            {"definition": d, "latest": None, "count": 0, "history": []}
+            for d in definitions
+        ]
+        self.refresh_signal_table()
+        if self.signal_definitions:
+            self.signal_table.selectRow(0)
+        self.signal_status.setText(
+            f"Загружено сигналов: {len(self.signal_definitions)}. Проверьте корректность формул."
+        )
 
     def set_research_phase(self, phase):
         if phase not in (None, "baseline", "experiment"):
@@ -748,6 +970,7 @@ class MainWindow(QMainWindow):
     def add_frame(self, frame):
         self.rows.append(frame)
         self.analyzer.add(frame)
+        self.update_signal_monitor(frame)
         if self.research_phase == "baseline":
             self.baseline_rows.append(dict(frame))
         elif self.research_phase == "experiment" and self.active_trial_rows is not None:
