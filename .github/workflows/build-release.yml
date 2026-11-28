@@ -1,0 +1,48 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Build executable
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all PySide6 --hidden-import serial.tools.list_ports --name CitroenC4Monitor main.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CitroenC4Monitor-windows
+          path: dist/CitroenC4Monitor.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" "dist/CitroenC4Monitor.exe" --title "CitroenC4Monitor ${{ github.ref_name }}" --generate-notes
