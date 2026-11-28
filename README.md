@@ -15,6 +15,20 @@ pip install -r requirements.txt
 py main.py
 ```
 
+## Сборка EXE в Windows
+
+Для сборки автономного EXE на Windows 10 установите Python 3 (при установке включите добавление Python в PATH), затем дважды щёлкните по файлу `build_exe.bat` в корне проекта. Скрипт установит зависимости из `requirements.txt`, установит PyInstaller и соберёт приложение.
+
+Готовый файл появится здесь: `dist\\CitroenC4Monitor.exe`. Для запуска на компьютере, где собирали приложение, Python отдельно запускать не нужно. На другом ПК проверьте запуск и при необходимости установите Microsoft Visual C++ Redistributable; сборку EXE следует выполнять под Windows для целевой архитектуры Windows.
+
+Для ручной сборки используйте:
+
+```powershell
+py -3 -m pip install -r requirements.txt
+py -3 -m pip install pyinstaller
+py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --name CitroenC4Monitor main.py
+```
+
 ## Подключение
 
 Укажите COM-порт адаптера WeAct (например COM3), скорость последовательного порта 115200 и скорость CAN, подтверждённую для выбранной шины. Начинайте только с пассивного прослушивания. Настройки контактов OBD и скорости CAN должны быть проверены по электросхеме именно вашего VIN/комплектации.
