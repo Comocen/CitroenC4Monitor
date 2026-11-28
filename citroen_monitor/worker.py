@@ -27,7 +27,7 @@ class CanWorker(QThread):
 
     def _command(self, command, timeout=1.0):
         """Send one SLCAN command and require CR ACK (reject 0x07 NAK)."""
-        self.ser.write(command.encode("ascii") + b"\\r")
+        self.ser.write(command.encode("ascii") + b"\r")
         self.ser.flush()
         deadline = time.monotonic() + timeout
         response = bytearray()
@@ -36,11 +36,11 @@ class CanWorker(QThread):
             if not chunk:
                 continue
             response.extend(chunk)
-            if b"\\x07" in response:
+            if b"\x07" in response:
                 raise RuntimeError(
                     f"Адаптер отклонил команду {command!r} (NAK 0x07)"
                 )
-            if b"\\r" in response:
+            if b"\r" in response:
                 return
         raise RuntimeError(
             f"Нет ACK (CR) на команду {command!r}; ответ: {bytes(response)!r}"
@@ -140,7 +140,7 @@ class AdapterCheckWorker(QThread):
             )
             time.sleep(0.1)
             ser.reset_input_buffer()
-            ser.write(b"V\\r")
+            ser.write(b"V\r")
             ser.flush()
             response = bytearray()
             deadline = time.monotonic() + 2.0
@@ -148,7 +148,7 @@ class AdapterCheckWorker(QThread):
                 chunk = ser.read(ser.in_waiting or 1)
                 if chunk:
                     response.extend(chunk)
-                    if b"\\x07" in response or b"\\r" in response:
+                    if b"\x07" in response or b"\r" in response:
                         break
             raw = bytes(response)
             if not raw:
@@ -156,12 +156,12 @@ class AdapterCheckWorker(QThread):
                     "Нет ответа на запрос версии V. Проверьте COM-порт, "
                     "serial baud и драйвер."
                 )
-            elif b"\\x07" in raw:
+            elif b"\x07" in raw:
                 self.error.emit(f"Адаптер вернул NAK (0x07): {raw!r}")
             else:
                 version = (
-                    raw.replace(b"\\r", b"")
-                    .replace(b"\\n", b"")
+                    raw.replace(b"\r", b"")
+                    .replace(b"\n", b"")
                     .decode("ascii", errors="replace")
                     .strip()
                 )
